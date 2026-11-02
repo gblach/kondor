@@ -37,10 +37,15 @@ What kondo has and kondor does not:
 ## Install
 
 ```sh
+# From source
 cargo install kondor
-```
 
-To build from a clone of this repository instead, run `cargo install --path .`.
+# Prebuilt binary
+cargo binstall kondor
+
+# From a clone of this repository
+cargo install --path .
+```
 
 ## Usage
 
