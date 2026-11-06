@@ -20,9 +20,9 @@ What kondor does differently:
   `skipped`.
 - **Read-only directories are removed.** Some build outputs contain read-only directories; kondor
   makes them writable and tries again.
-- **Other project types.** Bun, Deno, Meson, Go (`vendor`) and Ruby (`.bundle`, `vendor/bundle`)
-  are detected, and Python projects are found by their project files and also clean `.venv`,
-  `venv`, `build` and `dist`.
+- **Other project types.** Bun, Deno, KiCad, Meson, Go (`vendor`) and Ruby (`.bundle`,
+  `vendor/bundle`) are detected, and Python projects are found by their project files and also
+  clean `.venv`, `venv`, `build` and `dist`.
 - **Failures are reported.** The exit code is 1 when something could not be removed, and the
   freed total also counts directories that were only partly removed.
 
@@ -112,6 +112,7 @@ and a hidden directory given as an argument (`kondor ~/.config/nvim`) is scanned
 ## Supported projects
 
 A directory is a project when it contains one of the marker files (`*` matches by suffix).
+Artifacts are directories, except KiCad's `fp-info-cache` and `*-bak`, which are files.
 
 | Type    | Markers                                                                                 | Artifacts                                                                                                                     |
 | ------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
@@ -124,6 +125,7 @@ A directory is a project when it contains one of the marker files (`*` matches b
 | Go      | `go.mod`                                                                                | `vendor`                                                                                                                      |
 | Gradle  | `build.gradle`, `build.gradle.kts`                                                      | `build`, `.gradle`                                                                                                            |
 | Haskell | `stack.yaml`, `cabal.project`, `*.cabal`, `package.yaml`                                | `.stack-work`, `dist-newstyle`                                                                                                |
+| KiCad   | `*.kicad_pro`                                                                           | `*-backups`, `fp-info-cache`, `*.kicad_pcb-bak`, `*.kicad_sch-bak`                                                            |
 | Maven   | `pom.xml`                                                                               | `target`                                                                                                                      |
 | Meson   | `meson.build`                                                                           | `build`, `builddir`, `_build`                                                                                                 |
 | .NET    | `*.csproj`                                                                              | `bin`, `obj`                                                                                                                  |
@@ -166,6 +168,7 @@ Some artifact names can also be used for real source directories:
 
 - Go `vendor` is sometimes committed to git (restore with `go mod vendor`).
 - `build` and `dist` in C/C++, Meson and Python projects may contain hand-written files.
+- KiCad `*-backups` holds the only copies of earlier versions of the design.
 
 Review the list before answering `y`, and be careful with `--yes`. To keep such a directory, add
 an [exclude](#custom-artifacts) for it to a `.kondor` file.

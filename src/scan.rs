@@ -8,7 +8,8 @@ use globset::Glob;
 struct Kind {
     name: &'static str,
     markers: &'static [&'static str],
-    artifacts: &'static [&'static str],
+    artifact_dirs: &'static [&'static str],
+    artifact_files: &'static [&'static str],
 }
 
 const JS_ARTIFACTS: &[&str] = &["node_modules", ".angular", ".next", ".nuxt", ".svelte-kit"];
@@ -18,27 +19,31 @@ const KINDS: &[Kind] = &[
     Kind {
         name: "Bun",
         markers: &["bun.lock", "bun.lockb", "bunfig.toml"],
-        artifacts: JS_ARTIFACTS,
+        artifact_dirs: JS_ARTIFACTS,
+        artifact_files: &[],
     },
     Kind {
         name: "C/C++",
         markers: &["CMakeLists.txt", "Makefile"],
-        artifacts: &["build", "cmake-build-debug", "cmake-build-release"],
+        artifact_dirs: &["build", "cmake-build-debug", "cmake-build-release"],
+        artifact_files: &[],
     },
     Kind {
         name: "Cargo",
         markers: &["Cargo.toml"],
-        artifacts: &["target"],
+        artifact_dirs: &["target"],
+        artifact_files: &[],
     },
     Kind {
         name: "Dart",
         markers: &["pubspec.yaml"],
-        artifacts: &[".dart_tool", "build"],
+        artifact_dirs: &[".dart_tool", "build"],
+        artifact_files: &[],
     },
     Kind {
         name: "Deno",
         markers: &["deno.json", "deno.jsonc"],
-        artifacts: &[
+        artifact_dirs: &[
             "node_modules",
             "vendor",
             ".angular",
@@ -46,51 +51,67 @@ const KINDS: &[Kind] = &[
             ".nuxt",
             ".svelte-kit",
         ],
+        artifact_files: &[],
     },
     Kind {
         name: "Elixir",
         markers: &["mix.exs"],
-        artifacts: &["_build"],
+        artifact_dirs: &["_build"],
+        artifact_files: &[],
     },
     Kind {
         name: "Go",
         markers: &["go.mod"],
-        artifacts: &["vendor"],
+        artifact_dirs: &["vendor"],
+        artifact_files: &[],
     },
     Kind {
         name: "Gradle",
         markers: &["build.gradle", "build.gradle.kts"],
-        artifacts: &["build", ".gradle"],
+        artifact_dirs: &["build", ".gradle"],
+        artifact_files: &[],
     },
     Kind {
         name: "Haskell",
         markers: &["stack.yaml", "cabal.project", "*.cabal", "package.yaml"],
-        artifacts: &[".stack-work", "dist-newstyle"],
+        artifact_dirs: &[".stack-work", "dist-newstyle"],
+        artifact_files: &[],
+    },
+    Kind {
+        name: "KiCad",
+        markers: &["*.kicad_pro"],
+        artifact_dirs: &["*-backups"],
+        artifact_files: &["fp-info-cache", "*.kicad_pcb-bak", "*.kicad_sch-bak"],
     },
     Kind {
         name: "Maven",
         markers: &["pom.xml"],
-        artifacts: &["target"],
+        artifact_dirs: &["target"],
+        artifact_files: &[],
     },
     Kind {
         name: "Meson",
         markers: &["meson.build"],
-        artifacts: &["build", "builddir", "_build"],
+        artifact_dirs: &["build", "builddir", "_build"],
+        artifact_files: &[],
     },
     Kind {
         name: ".NET",
         markers: &["*.csproj"],
-        artifacts: &["bin", "obj"],
+        artifact_dirs: &["bin", "obj"],
+        artifact_files: &[],
     },
     Kind {
         name: "Node",
         markers: &["package.json"],
-        artifacts: JS_ARTIFACTS,
+        artifact_dirs: JS_ARTIFACTS,
+        artifact_files: &[],
     },
     Kind {
         name: "PHP",
         markers: &["composer.json"],
-        artifacts: &["vendor"],
+        artifact_dirs: &["vendor"],
+        artifact_files: &[],
     },
     Kind {
         name: "Python",
@@ -102,7 +123,7 @@ const KINDS: &[Kind] = &[
             "Pipfile",
             "poetry.lock",
         ],
-        artifacts: &[
+        artifact_dirs: &[
             "__pycache__",
             ".venv",
             "venv",
@@ -115,26 +136,31 @@ const KINDS: &[Kind] = &[
             "build",
             "dist",
         ],
+        artifact_files: &[],
     },
     Kind {
         name: "Ruby",
         markers: &["Gemfile"],
-        artifacts: &[".bundle", "vendor/bundle"],
+        artifact_dirs: &[".bundle", "vendor/bundle"],
+        artifact_files: &[],
     },
     Kind {
         name: "Scala",
         markers: &["build.sbt"],
-        artifacts: &["target"],
+        artifact_dirs: &["target"],
+        artifact_files: &[],
     },
     Kind {
         name: "Swift",
         markers: &["Package.swift"],
-        artifacts: &[".build"],
+        artifact_dirs: &[".build"],
+        artifact_files: &[],
     },
     Kind {
         name: "Zig",
         markers: &["build.zig"],
-        artifacts: &["zig-cache", ".zig-cache", "zig-out"],
+        artifact_dirs: &["zig-cache", ".zig-cache", "zig-out"],
+        artifact_files: &[],
     },
 ];
 
@@ -245,7 +271,7 @@ fn matches(pattern: &str, name: &OsStr) -> bool {
     }
 }
 
-/// Returns the file names and the sorted directory names in `dir`. Symlinks are left out.
+/// Returns the sorted file and directory names in `dir`. Symlinks are left out.
 fn read_entries(dir: &Path) -> Option<(Vec<OsString>, Vec<OsString>)> {
     let mut files = Vec::new();
     let mut dirs = Vec::new();
@@ -256,14 +282,23 @@ fn read_entries(dir: &Path) -> Option<(Vec<OsString>, Vec<OsString>)> {
             _ => {}
         }
     }
+    files.sort();
     dirs.sort();
     Some((files, dirs))
 }
 
+struct Patterns {
+    dirs: Vec<&'static str>,
+    files: Vec<&'static str>,
+}
+
 /// Returns the names of the detected kinds and their artifact patterns.
-fn detect_kinds(files: &[OsString]) -> (Vec<&'static str>, Vec<&'static str>) {
+fn detect_kinds(files: &[OsString]) -> (Vec<&'static str>, Patterns) {
     let mut kinds = Vec::new();
-    let mut patterns = Vec::new();
+    let mut patterns = Patterns {
+        dirs: Vec::new(),
+        files: Vec::new(),
+    };
     for kind in KINDS {
         let found = kind
             .markers
@@ -271,7 +306,8 @@ fn detect_kinds(files: &[OsString]) -> (Vec<&'static str>, Vec<&'static str>) {
             .any(|marker| files.iter().any(|file| matches(marker, file)));
         if found {
             kinds.push(kind.name);
-            patterns.extend(kind.artifacts);
+            patterns.dirs.extend(kind.artifact_dirs);
+            patterns.files.extend(kind.artifact_files);
         }
     }
     (kinds, patterns)
@@ -305,16 +341,21 @@ impl KondorFile {
 /// Returns the artifact paths and whether the `.kondor` file added any of them.
 fn collect_artifacts(
     dir: &Path,
+    files: &[OsString],
     dirs: &[OsString],
-    patterns: &[&str],
+    patterns: &Patterns,
     kondor: KondorFile,
 ) -> (Vec<PathBuf>, bool) {
-    let mut artifacts: Vec<PathBuf> = dirs
-        .iter()
-        .filter(|name| patterns.iter().any(|pattern| matches(pattern, name)))
-        .map(|name| dir.join(name))
-        .collect();
-    for pattern in patterns.iter().filter(|pattern| pattern.contains('/')) {
+    let matching = |names: &[OsString], patterns: &[&str]| -> Vec<PathBuf> {
+        names
+            .iter()
+            .filter(|name| patterns.iter().any(|pattern| matches(pattern, name)))
+            .map(|name| dir.join(name))
+            .collect()
+    };
+    let mut artifacts = matching(dirs, &patterns.dirs);
+    artifacts.extend(matching(files, &patterns.files));
+    for pattern in patterns.dirs.iter().filter(|pattern| pattern.contains('/')) {
         let path = dir.join(pattern);
         if !artifacts.contains(&path) && is_real_nested_dir(dir, pattern) {
             artifacts.push(path);
@@ -346,7 +387,7 @@ pub fn scan(
     };
     let (mut kinds, patterns) = detect_kinds(&files);
     let kondor = KondorFile::read(dir, &files);
-    let (artifacts, from_kondor) = collect_artifacts(dir, &dirs, &patterns, kondor);
+    let (artifacts, from_kondor) = collect_artifacts(dir, &files, &dirs, &patterns, kondor);
     if from_kondor {
         kinds.push(KONDOR_FILE);
     }
@@ -429,6 +470,40 @@ mod tests {
             .iter()
             .map(PathBuf::from)
             .collect();
+        assert_eq!(found, expected);
+    }
+
+    #[test]
+    fn kicad_cleans_backup_dirs_and_files() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path();
+        touch(&root.join("board.kicad_pro"));
+        touch(&root.join("board.kicad_pcb"));
+        touch(&root.join("board.kicad_pcb-bak"));
+        touch(&root.join("board.kicad_sch-bak"));
+        touch(&root.join("fp-info-cache"));
+        touch(&root.join("board-backups/board-2026-01-01_120000.zip"));
+        touch(&root.join("fp-info-cache-dir/x"));
+        touch(&root.join("other/fp-info-cache"));
+
+        let mut found = Vec::new();
+        let _ = scan(root, &[], &mut |p| {
+            let artifacts = p.artifacts.into_iter().map(|(a, _)| a);
+            found.push((p.path, p.kinds, artifacts.collect::<Vec<_>>()));
+            ControlFlow::Continue(())
+        });
+
+        let artifacts = [
+            "board-backups",
+            "board.kicad_pcb-bak",
+            "board.kicad_sch-bak",
+            "fp-info-cache",
+        ];
+        let expected = vec![(
+            root.to_path_buf(),
+            vec!["KiCad"],
+            artifacts.iter().map(|a| root.join(a)).collect::<Vec<_>>(),
+        )];
         assert_eq!(found, expected);
     }
 
