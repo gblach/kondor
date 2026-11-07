@@ -36,6 +36,16 @@ What kondo has and kondor does not:
 
 ## Install
 
+On Fedora, install it from the
+[gblachx/apps](https://copr.fedorainfracloud.org/coprs/gblachx/apps/) COPR repository:
+
+```sh
+sudo dnf copr enable gblachx/apps
+sudo dnf install kondor
+```
+
+With Cargo:
+
 ```sh
 # From source
 cargo install kondor
