@@ -18,8 +18,8 @@ What kondor does differently:
 - **One key per answer.** The prompt reacts to a single key press (`y`, `n`, `a`, `q`) or the
   arrow keys, without Enter. Each answered project is left as one line with its freed size or
   `skipped`.
-- **Read-only directories are removed.** Some build outputs contain read-only directories; kondor
-  makes them writable and tries again.
+- **Read-only directories can be removed.** Some build outputs contain read-only directories;
+  with `--force` kondor makes them writable before removing them.
 - **Other project types.** Bun, Deno, KiCad, Meson, Go (`vendor`) and Ruby (`.bundle`,
   `vendor/bundle`) are detected, and Python projects are found by their project files and also
   clean `.venv`, `venv`, `build` and `dist`.
@@ -60,7 +60,7 @@ cargo install --path .
 ## Usage
 
 ```text
-Usage: kondor [-y] [-n] [<dirs...>]
+Usage: kondor [-y] [-n] [-f] [<dirs...>]
 
 Arguments:
   dirs           Directories to scan (default: current directory).
@@ -68,6 +68,7 @@ Arguments:
 Options:
   -y, --yes      Clean all found projects without asking.
   -n, --dry-run  List what would be cleaned without removing anything.
+  -f, --force    Make read-only directories writable so they can be removed.
   -h, --help     Show this help message and exit.
 ```
 

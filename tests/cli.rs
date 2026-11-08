@@ -116,6 +116,23 @@ fn failed_removal_sets_the_exit_code() {
 }
 
 #[test]
+fn force_removes_read_only_directories() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    write(&root.join("old/go.mod"), 0);
+    write(&root.join("old/vendor/mod/x"), 10);
+    fs::set_permissions(
+        root.join("old/vendor/mod"),
+        fs::Permissions::from_mode(0o555),
+    )
+    .unwrap();
+
+    let output = kondor(root, &["--yes", "--force"]);
+    assert!(output.status.success());
+    assert!(!root.join("old/vendor").exists());
+}
+
+#[test]
 fn kondor_file_excludes_are_kept() {
     let temp = TempDir::new().unwrap();
     let root = temp.path();

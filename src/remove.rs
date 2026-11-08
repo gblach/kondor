@@ -33,9 +33,11 @@ fn make_writable(dir: &OwnedFd) -> io::Result<()> {
     Ok(())
 }
 
-fn remove_tree<P: Arg + Copy>(parent: &OwnedFd, name: P) -> io::Result<()> {
+fn remove_tree<P: Arg + Copy>(parent: &OwnedFd, name: P, force: bool) -> io::Result<()> {
     let dir = open_child(parent, name)?;
-    make_writable(&dir)?;
+    if force {
+        make_writable(&dir)?;
+    }
     let mut entries: Vec<(CString, FileType)> = Vec::new();
     for entry in Dir::read_from(&dir)? {
         let entry = entry?;
@@ -51,7 +53,7 @@ fn remove_tree<P: Arg + Copy>(parent: &OwnedFd, name: P) -> io::Result<()> {
             );
         }
         if kind == FileType::Directory {
-            remove_tree(&dir, entry_name.as_c_str())?;
+            remove_tree(&dir, entry_name.as_c_str(), force)?;
         } else {
             unlinkat(&dir, &entry_name, AtFlags::empty())?;
         }
@@ -61,8 +63,8 @@ fn remove_tree<P: Arg + Copy>(parent: &OwnedFd, name: P) -> io::Result<()> {
 
 /// Removes `path`, which must be inside `root`. Every directory below `root` is opened without
 /// following symlinks, so the removal stays inside `root` even if the tree changes after the
-/// scan.
-pub fn remove(root: &Path, path: &Path) -> io::Result<()> {
+/// scan. With `force`, read-only directories are made writable first.
+pub fn remove(root: &Path, path: &Path, force: bool) -> io::Result<()> {
     let relative = path
         .strip_prefix(root)
         .expect("artifacts are found below the scanned directory");
@@ -74,7 +76,7 @@ pub fn remove(root: &Path, path: &Path) -> io::Result<()> {
     }
     let kind = FileType::from_raw_mode(statat(&dir, name, AtFlags::SYMLINK_NOFOLLOW)?.st_mode);
     if kind == FileType::Directory {
-        remove_tree(&dir, name)
+        remove_tree(&dir, name, force)
     } else {
         Ok(unlinkat(&dir, name, AtFlags::empty())?)
     }
@@ -90,7 +92,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn removes_read_only_directories() {
+    fn removes_read_only_directories_only_with_force() {
         let temp = TempDir::new().unwrap();
         let root = temp.path();
         let cache = root.join("go/pkg/mod/cache");
@@ -98,7 +100,12 @@ mod tests {
         fs::write(cache.join("x"), b"x").unwrap();
         fs::set_permissions(&cache, fs::Permissions::from_mode(0o555)).unwrap();
 
-        remove(root, &root.join("go/pkg")).unwrap();
+        // Running as root ignores permissions, so only check the failure as a normal user.
+        if fs::write(cache.join("probe"), b"").is_err() {
+            assert!(remove(root, &root.join("go/pkg"), false).is_err());
+            assert!(cache.join("x").exists());
+        }
+        remove(root, &root.join("go/pkg"), true).unwrap();
         assert!(!root.join("go/pkg").exists());
     }
 
@@ -116,8 +123,8 @@ mod tests {
         fs::create_dir_all(root.join("web/node_modules")).unwrap();
         symlink(outside, root.join("web/node_modules/link")).unwrap();
 
-        assert!(remove(root, &root.join("project/target")).is_err());
-        remove(root, &root.join("web/node_modules")).unwrap();
+        assert!(remove(root, &root.join("project/target"), false).is_err());
+        remove(root, &root.join("web/node_modules"), false).unwrap();
         assert!(outside.join("target").exists());
         assert!(outside.join("kept").exists());
         assert!(!root.join("web/node_modules").exists());
@@ -131,7 +138,7 @@ mod tests {
         fs::write(root.join("logs/a.log"), b"x").unwrap();
         fs::write(root.join("logs/b.txt"), b"x").unwrap();
 
-        remove(root, &root.join("logs/a.log")).unwrap();
+        remove(root, &root.join("logs/a.log"), false).unwrap();
         assert!(!root.join("logs/a.log").exists());
         assert!(root.join("logs/b.txt").exists());
     }

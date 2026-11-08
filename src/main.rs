@@ -25,6 +25,10 @@ struct Args {
     #[argp(switch, short = 'n')]
     dry_run: bool,
 
+    /// Make read-only directories writable so they can be removed.
+    #[argp(switch, short = 'f')]
+    force: bool,
+
     /// Directories to scan (default: current directory).
     #[argp(positional)]
     dirs: Vec<PathBuf>,
@@ -35,16 +39,17 @@ struct State {
     clean_all: bool,
     after_prompt: bool,
     dry_run: bool,
+    force: bool,
     failed: bool,
     freed: u64,
 }
 
 /// Returns the bytes freed and a message for each artifact that could not be removed.
-fn clean(root: &Path, project: &Project) -> (u64, Vec<String>) {
+fn clean(root: &Path, project: &Project, force: bool) -> (u64, Vec<String>) {
     let mut freed = 0;
     let mut errors = Vec::new();
     for (path, bytes) in &project.artifacts {
-        if let Err(e) = remove(root, path) {
+        if let Err(e) = remove(root, path, force) {
             errors.push(format!("Failed to remove {}: {e}", display_path(path)));
         }
         // A removal that fails partway has already deleted part of the artifact.
@@ -71,7 +76,7 @@ fn on_project(root: &Path, project: Project, state: &mut State) -> io::Result<Co
             }
         }
     }
-    let (freed, errors) = clean(root, &project);
+    let (freed, errors) = clean(root, &project, state.force);
     state.freed += freed;
     state.failed |= !errors.is_empty();
     let outcome = if freed == 0 && !errors.is_empty() {
@@ -107,6 +112,7 @@ fn main() -> ExitCode {
         // Stays true after "All", so every project in a run gets the same kind of line.
         after_prompt: !args.yes,
         dry_run: args.dry_run,
+        force: args.force,
         failed: false,
         freed: 0,
     };
