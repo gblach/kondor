@@ -1,7 +1,8 @@
 use std::ffi::{OsStr, OsString};
-use std::fs;
+use std::fs::{self, Metadata};
 use std::ops::ControlFlow;
 use std::path::{Component, Path, PathBuf};
+use std::time::SystemTime;
 
 use globset::Glob;
 
@@ -170,6 +171,8 @@ pub struct Project {
     pub path: PathBuf,
     pub kinds: Vec<&'static str>,
     pub artifacts: Vec<(PathBuf, u64)>,
+    /// Newest modification time of the files in the artifacts.
+    pub artifacts_modified: SystemTime,
 }
 
 impl Project {
@@ -192,26 +195,80 @@ fn is_real_dir(path: &Path) -> bool {
     fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir())
 }
 
-fn dir_size(path: &Path) -> u64 {
+fn file_modified(meta: &Metadata) -> SystemTime {
+    meta.modified().unwrap_or(SystemTime::UNIX_EPOCH)
+}
+
+/// Returns the total size and the newest modification time of the files in a directory.
+fn dir_stats(path: &Path) -> (u64, SystemTime) {
     let Ok(entries) = fs::read_dir(path) else {
-        return 0;
+        return (0, SystemTime::UNIX_EPOCH);
     };
     entries
         .flatten()
         .map(|entry| match entry.file_type() {
-            Ok(kind) if kind.is_dir() => dir_size(&entry.path()),
-            _ => entry.metadata().map_or(0, |meta| meta.len()),
+            Ok(kind) if kind.is_dir() => dir_stats(&entry.path()),
+            _ => entry
+                .metadata()
+                .map_or((0, SystemTime::UNIX_EPOCH), |meta| {
+                    (meta.len(), file_modified(&meta))
+                }),
         })
-        .sum()
+        .fold((0, SystemTime::UNIX_EPOCH), |(bytes, newest), (b, m)| {
+            (bytes + b, newest.max(m))
+        })
+}
+
+/// Size and modification time of a directory's contents or of a single file.
+fn stats(path: &Path) -> (u64, SystemTime) {
+    if is_real_dir(path) {
+        dir_stats(path)
+    } else {
+        fs::symlink_metadata(path).map_or((0, SystemTime::UNIX_EPOCH), |meta| {
+            (meta.len(), file_modified(&meta))
+        })
+    }
 }
 
 /// Size of a directory's contents or of a single file; 0 when the path does not exist.
 pub fn size(path: &Path) -> u64 {
-    if is_real_dir(path) {
-        dir_size(path)
-    } else {
-        fs::symlink_metadata(path).map_or(0, |meta| meta.len())
-    }
+    stats(path).0
+}
+
+/// Directory mtimes are left out, because removing an artifact updates its parent's mtime and
+/// would make a cleaned project look recently used. Hidden directories are skipped like in
+/// `scan`, so a `git fetch` into `.git` does not count as work on the project.
+fn newest_source(dir: &Path, artifacts: &[(PathBuf, u64)]) -> SystemTime {
+    let Ok(entries) = fs::read_dir(dir) else {
+        return SystemTime::UNIX_EPOCH;
+    };
+    entries
+        .flatten()
+        .map(|entry| {
+            let path = entry.path();
+            match entry.file_type() {
+                Ok(kind) if kind.is_dir() => {
+                    let hidden = entry.file_name().as_encoded_bytes().starts_with(b".");
+                    if hidden || artifacts.iter().any(|(artifact, _)| *artifact == path) {
+                        SystemTime::UNIX_EPOCH
+                    } else {
+                        newest_source(&path, artifacts)
+                    }
+                }
+                _ => entry
+                    .metadata()
+                    .map_or(SystemTime::UNIX_EPOCH, |meta| file_modified(&meta)),
+            }
+        })
+        .max()
+        .unwrap_or(SystemTime::UNIX_EPOCH)
+}
+
+/// Newest modification time of any file in the project, artifacts and nested projects included.
+pub fn modified(project: &Project) -> SystemTime {
+    project
+        .artifacts_modified
+        .max(newest_source(&project.path, &project.artifacts))
 }
 
 /// Paths from `.kondor` may come from untrusted repos, so they must stay inside the project.
@@ -401,10 +458,12 @@ pub fn scan(
     skip.extend(artifacts.iter().cloned());
 
     if !artifacts.is_empty() {
+        let mut artifacts_modified = SystemTime::UNIX_EPOCH;
         let artifacts = artifacts
             .into_iter()
             .map(|path| {
-                let bytes = size(&path);
+                let (bytes, modified) = stats(&path);
+                artifacts_modified = artifacts_modified.max(modified);
                 (path, bytes)
             })
             .collect();
@@ -412,6 +471,7 @@ pub fn scan(
             path: dir.to_path_buf(),
             kinds,
             artifacts,
+            artifacts_modified,
         })?;
     }
 
@@ -432,7 +492,9 @@ pub fn scan(
 
 #[cfg(test)]
 mod tests {
+    use std::fs::File;
     use std::os::unix::fs::symlink;
+    use std::time::Duration;
 
     use tempfile::TempDir;
 
@@ -654,6 +716,37 @@ mod tests {
         let found = found_paths(root);
         // A symlinked project is not entered, and a symlinked artifact is not an artifact.
         assert!(found.is_empty(), "{found:?}");
+    }
+
+    #[test]
+    fn modified_is_the_newest_file_outside_hidden_dirs() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path();
+        let old = SystemTime::UNIX_EPOCH + Duration::from_secs(1_000_000);
+        let set_mtime = |path: &str, secs: u64| {
+            touch(&root.join(path));
+            let time = old + Duration::from_secs(secs);
+            File::options()
+                .write(true)
+                .open(root.join(path))
+                .unwrap()
+                .set_modified(time)
+                .unwrap();
+        };
+        set_mtime("Cargo.toml", 0);
+        set_mtime("src/main.rs", 10);
+        set_mtime("target/debug/bin", 20);
+        set_mtime(".git/FETCH_HEAD", 1000);
+
+        let mut projects = Vec::new();
+        let _ = scan(root, &[], &mut |p| {
+            projects.push(p);
+            ControlFlow::Continue(())
+        });
+        assert_eq!(modified(&projects[0]), old + Duration::from_secs(20));
+
+        set_mtime("web/package.json", 30);
+        assert_eq!(modified(&projects[0]), old + Duration::from_secs(30));
     }
 
     #[test]

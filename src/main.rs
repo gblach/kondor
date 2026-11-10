@@ -2,6 +2,7 @@ use std::io;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
+use std::time::Duration;
 
 use argp::FromArgs;
 use console::Term;
@@ -11,7 +12,7 @@ mod scan;
 mod ui;
 
 use remove::remove;
-use scan::{Project, scan, size};
+use scan::{Project, modified, scan, size};
 use ui::{Choice, Outcome, ask, display_path, print_outcome, print_total};
 
 /// Clean build artifacts from software projects, including projects nested in other projects.
@@ -29,6 +30,11 @@ struct Args {
     #[argp(switch, short = 'f')]
     force: bool,
 
+    /// Only clean projects with no file changed for this long, e.g. 20d. Units: m, h, d, w,
+    /// M (30 days), y (365 days).
+    #[argp(option, short = 'o', arg_name = "age", from_str_fn(parse_age))]
+    older: Option<Duration>,
+
     /// Directories to scan (default: current directory).
     #[argp(positional)]
     dirs: Vec<PathBuf>,
@@ -40,8 +46,27 @@ struct State {
     after_prompt: bool,
     dry_run: bool,
     force: bool,
+    older: Option<Duration>,
     failed: bool,
     freed: u64,
+}
+
+fn parse_age(value: &str) -> Result<Duration, String> {
+    const DAY: u64 = 24 * 60 * 60;
+    let error = || format!("invalid age `{value}`, expected a number and m, h, d, w, M or y");
+    let unit = value.chars().last().ok_or_else(error)?;
+    let unit_secs = match unit {
+        'm' => 60,
+        'h' => 60 * 60,
+        'd' => DAY,
+        'w' => 7 * DAY,
+        'M' => 30 * DAY,
+        'y' => 365 * DAY,
+        _ => return Err(error()),
+    };
+    let count: u64 = value[..value.len() - 1].parse().map_err(|_| error())?;
+    let secs = count.checked_mul(unit_secs).ok_or_else(error)?;
+    Ok(Duration::from_secs(secs))
 }
 
 /// Returns the bytes freed and a message for each artifact that could not be removed.
@@ -59,6 +84,13 @@ fn clean(root: &Path, project: &Project, force: bool) -> (u64, Vec<String>) {
 }
 
 fn on_project(root: &Path, project: Project, state: &mut State) -> io::Result<ControlFlow<()>> {
+    if let Some(older) = state.older {
+        // A modification time in the future fails `elapsed`, so the project counts as new.
+        let age = modified(&project).elapsed().unwrap_or_default();
+        if age < older {
+            return Ok(ControlFlow::Continue(()));
+        }
+    }
     state.found = true;
     if state.dry_run {
         state.freed += project.total();
@@ -113,6 +145,7 @@ fn main() -> ExitCode {
         after_prompt: !args.yes,
         dry_run: args.dry_run,
         force: args.force,
+        older: args.older,
         failed: false,
         freed: 0,
     };
@@ -136,5 +169,32 @@ fn main() -> ExitCode {
         ExitCode::FAILURE
     } else {
         ExitCode::SUCCESS
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_ages() {
+        assert_eq!(parse_age("30m"), Ok(Duration::from_secs(30 * 60)));
+        assert_eq!(parse_age("2h"), Ok(Duration::from_secs(2 * 3600)));
+        assert_eq!(parse_age("20d"), Ok(Duration::from_secs(20 * 86400)));
+        assert_eq!(parse_age("1w"), Ok(Duration::from_secs(7 * 86400)));
+        assert_eq!(parse_age("3M"), Ok(Duration::from_secs(90 * 86400)));
+        assert_eq!(parse_age("1y"), Ok(Duration::from_secs(365 * 86400)));
+        for bad in [
+            "",
+            "d",
+            "20",
+            "20 d",
+            "-5d",
+            "1.5d",
+            "20x",
+            "99999999999999y",
+        ] {
+            assert!(parse_age(bad).is_err(), "{bad}");
+        }
     }
 }

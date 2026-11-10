@@ -29,8 +29,7 @@ What kondor does differently:
 What kondo has and kondor does not:
 
 - a GUI (`kondo-ui`)
-- `--older` (only old projects), `--ignored-dirs`, `--follow-symlinks`, `--same-filesystem` and
-  `--quiet`
+- `--ignored-dirs`, `--follow-symlinks`, `--same-filesystem` and `--quiet`
 - Unity, Unreal Engine, Godot, Jupyter, Turborepo, Terraform, React Native, CocoaPods and Pixi
   projects
 
@@ -60,16 +59,18 @@ cargo install --path .
 ## Usage
 
 ```text
-Usage: kondor [-y] [-n] [-f] [<dirs...>]
+Usage: kondor [-y] [-n] [-f] [-o <age>] [<dirs...>]
 
 Arguments:
-  dirs           Directories to scan (default: current directory).
+  dirs               Directories to scan (default: current directory).
 
 Options:
-  -y, --yes      Clean all found projects without asking.
-  -n, --dry-run  List what would be cleaned without removing anything.
-  -f, --force    Make read-only directories writable so they can be removed.
-  -h, --help     Show this help message and exit.
+  -y, --yes          Clean all found projects without asking.
+  -n, --dry-run      List what would be cleaned without removing anything.
+  -f, --force        Make read-only directories writable so they can be removed.
+  -o, --older <age>  Only clean projects with no file changed for this long,
+                     e.g. 20d. Units: m, h, d, w, M (30 days), y (365 days).
+  -h, --help         Show this help message and exit.
 ```
 
 Projects are handled as soon as they are found, so nothing is buffered while scanning. For each
@@ -114,6 +115,12 @@ Would clean ./api (Cargo) 1.8 GiB
 Would clean ./api/frontend (Node) 429.2 MiB
 Would free 2.2 GiB
 ```
+
+`--older` leaves out projects that were used recently. A project's age is the time since the
+newest change to any file in it, so editing the code, building it or working in a nested project
+all make it recent. Hidden directories like `.git` do not count, but hidden artifacts like
+`.venv` do. Directories' own modification times are ignored, because removing an artifact
+updates them.
 
 Symlinks are never followed. Hidden directories (names starting with `.`) are not scanned,
 because they mostly hold tool data like `.git`, `~/.cache` or installed editor plugins, which look

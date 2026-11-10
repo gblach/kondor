@@ -310,6 +310,7 @@ pub fn print_total(found: bool, freed: u64, dry_run: bool) {
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
+    use std::time::SystemTime;
 
     use super::*;
 
@@ -321,6 +322,7 @@ mod tests {
                 .iter()
                 .map(|(name, size)| (Path::new(path).join(name), *size))
                 .collect(),
+            artifacts_modified: SystemTime::UNIX_EPOCH,
         }
     }
 

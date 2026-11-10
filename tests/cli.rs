@@ -1,7 +1,8 @@
-use std::fs;
+use std::fs::{self, File};
 use std::os::unix::fs::PermissionsExt;
 use std::path::Path;
 use std::process::{Command, Output, Stdio};
+use std::time::{Duration, SystemTime};
 
 use tempfile::TempDir;
 
@@ -149,4 +150,32 @@ fn kondor_file_excludes_are_kept() {
     );
     assert!(root.join("app/build/handwritten.sh").exists());
     assert!(!root.join("app/out").exists());
+}
+
+fn set_mtime(path: &Path, time: SystemTime) {
+    File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(time)
+        .unwrap();
+}
+
+#[test]
+fn older_skips_recently_changed_projects() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    write(&root.join("old/Cargo.toml"), 0);
+    write(&root.join("old/target/x"), 10);
+    write(&root.join("new/Cargo.toml"), 0);
+    write(&root.join("new/target/x"), 10);
+    let year_ago = SystemTime::now() - Duration::from_secs(400 * 86400);
+    set_mtime(&root.join("old/Cargo.toml"), year_ago);
+    set_mtime(&root.join("old/target/x"), year_ago);
+    set_mtime(&root.join("new/Cargo.toml"), year_ago);
+
+    let output = kondor(root, &["--yes", "--older", "1y"]);
+    assert!(output.status.success());
+    assert_eq!(stdout(&output), "Cleaned ./old (Cargo) 10 B\nFreed 10 B\n");
+    assert!(root.join("new/target/x").exists());
 }
