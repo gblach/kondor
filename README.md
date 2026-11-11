@@ -160,31 +160,35 @@ and a hidden directory given as an argument (`kondor ~/.config/nvim`) is scanned
 ## Supported projects
 
 A directory is a project when it contains one of the marker files (`*` matches by suffix).
+Python's `__pycache__` directories are cleaned at any depth below the project. Python's `build`
+and `dist` are cleaned only when they hold nothing but packaging output: `lib`, `lib.*`,
+`bdist.*`, `temp.*` and `scripts-*` directories in `build`, and `*.whl`, `*.tar.gz`, `*.zip`
+and `*.egg` files in `dist`.
 Artifacts are directories, except KiCad's `fp-info-cache` and `*-bak`, which are files.
 A directory with Bun or Deno markers is not also reported as Node.
 A `Makefile` counts only when no other marker is found, because projects of any type can have one.
 
 | Type    | Markers                                                                                 | Artifacts                                                                                                                     |
 | ------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| Bun     | `bun.lock`, `bun.lockb`, `bunfig.toml`                                                  | `node_modules`, `.angular`, `.next`, `.nuxt`, `.svelte-kit`                                                                   |
+| Bun     | `bun.lock`, `bun.lockb`, `bunfig.toml`                                                  | `node_modules`, `.angular`, `.astro`, `.next`, `.nuxt`, `.parcel-cache`, `.svelte-kit`, `.turbo`, `.vite`                     |
 | C/C++   | `CMakeLists.txt`, `Makefile`                                                            | `build`, `cmake-build-debug`, `cmake-build-release`                                                                           |
 | Cargo   | `Cargo.toml`                                                                            | `target`                                                                                                                      |
 | Dart    | `pubspec.yaml`                                                                          | `.dart_tool`, `build`                                                                                                         |
-| Deno    | `deno.json`, `deno.jsonc`                                                               | `node_modules`, `vendor`, `.angular`, `.next`, `.nuxt`, `.svelte-kit`                                                         |
-| Elixir  | `mix.exs`                                                                               | `_build`                                                                                                                      |
+| Deno    | `deno.json`, `deno.jsonc`                                                               | `node_modules`, `vendor`, `.angular`, `.astro`, `.next`, `.nuxt`, `.parcel-cache`, `.svelte-kit`, `.turbo`, `.vite`           |
+| Elixir  | `mix.exs`                                                                               | `_build`, `deps`                                                                                                              |
 | Go      | `go.mod`                                                                                | `vendor`                                                                                                                      |
 | Gradle  | `build.gradle`, `build.gradle.kts`                                                      | `build`, `.gradle`                                                                                                            |
 | Haskell | `stack.yaml`, `cabal.project`, `*.cabal`, `package.yaml`                                | `.stack-work`, `dist-newstyle`                                                                                                |
 | KiCad   | `*.kicad_pro`                                                                           | `*-backups`, `fp-info-cache`, `*.kicad_pcb-bak`, `*.kicad_sch-bak`                                                            |
 | Maven   | `pom.xml`                                                                               | `target`                                                                                                                      |
 | Meson   | `meson.build`                                                                           | `build`, `builddir`, `_build`                                                                                                 |
-| .NET    | `*.csproj`                                                                              | `bin`, `obj`                                                                                                                  |
-| Node    | `package.json`                                                                          | `node_modules`, `.angular`, `.next`, `.nuxt`, `.svelte-kit`                                                                   |
+| .NET    | `*.csproj`, `*.fsproj`, `*.vbproj`                                                      | `bin`, `obj`                                                                                                                  |
+| Node    | `package.json`                                                                          | `node_modules`, `.angular`, `.astro`, `.next`, `.nuxt`, `.parcel-cache`, `.svelte-kit`, `.turbo`, `.vite`                     |
 | PHP     | `composer.json`                                                                         | `vendor`                                                                                                                      |
 | Python  | `pyproject.toml`, `setup.py`, `setup.cfg`, `requirements.txt`, `Pipfile`, `poetry.lock` | `__pycache__`, `.venv`, `venv`, `.mypy_cache`, `.pytest_cache`, `.ruff_cache`, `.tox`, `.eggs`, `*.egg-info`, `build`, `dist` |
 | Ruby    | `Gemfile`                                                                               | `.bundle`, `vendor/bundle`                                                                                                    |
-| Scala   | `build.sbt`                                                                             | `target`                                                                                                                      |
-| Swift   | `Package.swift`                                                                         | `.build`                                                                                                                      |
+| Scala   | `build.sbt`                                                                             | `target`, `project/target`                                                                                                    |
+| Swift   | `Package.swift`                                                                         | `.build`, `.swiftpm`                                                                                                          |
 | Zig     | `build.zig`                                                                             | `zig-cache`, `.zig-cache`, `zig-out`                                                                                          |
 
 ## Custom artifacts
@@ -217,7 +221,7 @@ symlinks, so a `.kondor` file cannot remove anything outside its directory.
 Some artifact names can also be used for real source directories:
 
 - Go `vendor` is sometimes committed to git (restore with `go mod vendor`).
-- `build` and `dist` in C/C++, Meson and Python projects may contain hand-written files.
+- `build` in C/C++ and Meson projects may contain hand-written files.
 - KiCad `*-backups` holds the only copies of earlier versions of the design.
 
 Review the list before answering `y`, and be careful with `--yes`. To keep such a directory, add

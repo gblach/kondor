@@ -161,7 +161,7 @@ fn details(project: &Project, paint: &Paint) -> String {
     let names: Vec<String> = project
         .artifacts
         .iter()
-        .map(|(path, _)| display_name(path))
+        .map(|(path, _)| display_path(path.strip_prefix(&project.path).unwrap_or(path)))
         .collect();
     let sizes: Vec<String> = project
         .artifacts
@@ -317,7 +317,7 @@ mod tests {
     fn project(path: &str, artifacts: &[(&str, u64)]) -> Project {
         Project {
             path: PathBuf::from(path),
-            kinds: vec!["Node", "Bun"],
+            kinds: vec!["Node", "Python"],
             artifacts: artifacts
                 .iter()
                 .map(|(name, size)| (Path::new(path).join(name), *size))
@@ -358,20 +358,20 @@ mod tests {
         let plain = Paint(Style::new().force_styling(false));
         assert_eq!(
             title(&project("./api/web", &[]), &plain),
-            "Clean ./api/web (Node, Bun)?"
+            "Clean ./api/web (Node, Python)?"
         );
         assert_eq!(
             title(&project("web", &[]), &plain),
-            "Clean web (Node, Bun)?"
+            "Clean web (Node, Python)?"
         );
         assert_eq!(
             title(&project("/web", &[]), &plain),
-            "Clean /web (Node, Bun)?"
+            "Clean /web (Node, Python)?"
         );
-        assert_eq!(title(&project(".", &[]), &plain), "Clean . (Node, Bun)?");
+        assert_eq!(title(&project(".", &[]), &plain), "Clean . (Node, Python)?");
         assert_eq!(
             title(&project("./a\x1b/b\x1b", &[]), &plain),
-            "Clean ./a\\u{1b}/b\\u{1b} (Node, Bun)?"
+            "Clean ./a\\u{1b}/b\\u{1b} (Node, Python)?"
         );
     }
 

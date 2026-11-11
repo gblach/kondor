@@ -11,108 +11,169 @@ use globset::{Glob, GlobSet};
 struct Kind {
     name: &'static str,
     markers: &'static [&'static str],
+    /// Files that projects of any type can have, like `Makefile`. They count only when no
+    /// kind is found by its `markers`.
+    weak_markers: &'static [&'static str],
     artifact_dirs: &'static [&'static str],
     artifact_files: &'static [&'static str],
+    /// Names of kinds that are not reported next to this one, because their marker is part of
+    /// this kind too, like Node's `package.json` in a Bun project.
+    overrides: &'static [&'static str],
 }
 
-/// Patterns starting with `*` match by suffix. Artifacts containing `/` are nested paths.
+/// Patterns starting with `*` match by suffix. Artifacts containing `/` are nested paths, and
+/// artifacts starting with `**/` are found at any depth below the project.
 const KINDS: &[Kind] = &[
     Kind {
         name: "Bun",
         markers: &["bun.lock", "bun.lockb", "bunfig.toml"],
-        artifact_dirs: &["node_modules", ".angular", ".next", ".nuxt", ".svelte-kit"],
+        weak_markers: &[],
+        artifact_dirs: &[
+            "node_modules",
+            ".angular",
+            ".astro",
+            ".next",
+            ".nuxt",
+            ".parcel-cache",
+            ".svelte-kit",
+            ".turbo",
+            ".vite",
+        ],
         artifact_files: &[],
+        overrides: &["Node"],
     },
     Kind {
         name: "C/C++",
-        markers: &["CMakeLists.txt", "Makefile"],
+        markers: &["CMakeLists.txt"],
+        weak_markers: &["Makefile"],
         artifact_dirs: &["build", "cmake-build-debug", "cmake-build-release"],
         artifact_files: &[],
+        overrides: &[],
     },
     Kind {
         name: "Cargo",
         markers: &["Cargo.toml"],
+        weak_markers: &[],
         artifact_dirs: &["target"],
         artifact_files: &[],
+        overrides: &[],
     },
     Kind {
         name: "Dart",
         markers: &["pubspec.yaml"],
+        weak_markers: &[],
         artifact_dirs: &[".dart_tool", "build"],
         artifact_files: &[],
+        overrides: &[],
     },
     Kind {
         name: "Deno",
         markers: &["deno.json", "deno.jsonc"],
+        weak_markers: &[],
         artifact_dirs: &[
             "node_modules",
             "vendor",
             ".angular",
+            ".astro",
             ".next",
             ".nuxt",
+            ".parcel-cache",
             ".svelte-kit",
+            ".turbo",
+            ".vite",
         ],
         artifact_files: &[],
+        overrides: &["Node"],
     },
     Kind {
         name: "Elixir",
         markers: &["mix.exs"],
-        artifact_dirs: &["_build"],
+        weak_markers: &[],
+        artifact_dirs: &["_build", "deps"],
         artifact_files: &[],
+        overrides: &[],
     },
     Kind {
         name: "Go",
         markers: &["go.mod"],
+        weak_markers: &[],
         artifact_dirs: &["vendor"],
         artifact_files: &[],
+        overrides: &[],
     },
     Kind {
         name: "Gradle",
         markers: &["build.gradle", "build.gradle.kts"],
+        weak_markers: &[],
         artifact_dirs: &["build", ".gradle"],
         artifact_files: &[],
+        overrides: &[],
     },
     Kind {
         name: "Haskell",
         markers: &["stack.yaml", "cabal.project", "*.cabal", "package.yaml"],
+        weak_markers: &[],
         artifact_dirs: &[".stack-work", "dist-newstyle"],
         artifact_files: &[],
+        overrides: &[],
     },
     Kind {
         name: "KiCad",
         markers: &["*.kicad_pro"],
+        weak_markers: &[],
         artifact_dirs: &["*-backups"],
         artifact_files: &["fp-info-cache", "*.kicad_pcb-bak", "*.kicad_sch-bak"],
+        overrides: &[],
     },
     Kind {
         name: "Maven",
         markers: &["pom.xml"],
+        weak_markers: &[],
         artifact_dirs: &["target"],
         artifact_files: &[],
+        overrides: &[],
     },
     Kind {
         name: "Meson",
         markers: &["meson.build"],
+        weak_markers: &[],
         artifact_dirs: &["build", "builddir", "_build"],
         artifact_files: &[],
+        overrides: &[],
     },
     Kind {
         name: ".NET",
-        markers: &["*.csproj"],
+        markers: &["*.csproj", "*.fsproj", "*.vbproj"],
+        weak_markers: &[],
         artifact_dirs: &["bin", "obj"],
         artifact_files: &[],
+        overrides: &[],
     },
     Kind {
         name: "Node",
         markers: &["package.json"],
-        artifact_dirs: &["node_modules", ".angular", ".next", ".nuxt", ".svelte-kit"],
+        weak_markers: &[],
+        artifact_dirs: &[
+            "node_modules",
+            ".angular",
+            ".astro",
+            ".next",
+            ".nuxt",
+            ".parcel-cache",
+            ".svelte-kit",
+            ".turbo",
+            ".vite",
+        ],
         artifact_files: &[],
+        overrides: &[],
     },
     Kind {
         name: "PHP",
         markers: &["composer.json"],
+        weak_markers: &[],
         artifact_dirs: &["vendor"],
         artifact_files: &[],
+        overrides: &[],
     },
     Kind {
         name: "Python",
@@ -124,8 +185,9 @@ const KINDS: &[Kind] = &[
             "Pipfile",
             "poetry.lock",
         ],
+        weak_markers: &[],
         artifact_dirs: &[
-            "__pycache__",
+            "**/__pycache__",
             ".venv",
             "venv",
             ".mypy_cache",
@@ -134,34 +196,41 @@ const KINDS: &[Kind] = &[
             ".tox",
             ".eggs",
             "*.egg-info",
-            "build",
-            "dist",
         ],
         artifact_files: &[],
+        overrides: &[],
     },
     Kind {
         name: "Ruby",
         markers: &["Gemfile"],
+        weak_markers: &[],
         artifact_dirs: &[".bundle", "vendor/bundle"],
         artifact_files: &[],
+        overrides: &[],
     },
     Kind {
         name: "Scala",
         markers: &["build.sbt"],
-        artifact_dirs: &["target"],
+        weak_markers: &[],
+        artifact_dirs: &["target", "project/target"],
         artifact_files: &[],
+        overrides: &[],
     },
     Kind {
         name: "Swift",
         markers: &["Package.swift"],
-        artifact_dirs: &[".build"],
+        weak_markers: &[],
+        artifact_dirs: &[".build", ".swiftpm"],
         artifact_files: &[],
+        overrides: &[],
     },
     Kind {
         name: "Zig",
         markers: &["build.zig"],
+        weak_markers: &[],
         artifact_dirs: &["zig-cache", ".zig-cache", "zig-out"],
         artifact_files: &[],
+        overrides: &[],
     },
 ];
 
@@ -353,34 +422,61 @@ fn read_entries(dir: &Path) -> Option<(Vec<OsString>, Vec<OsString>)> {
 struct Patterns {
     dirs: Vec<&'static str>,
     files: Vec<&'static str>,
+    /// Whether `build` and `dist` are checked with `is_python_output`.
+    python: bool,
+}
+
+/// `build` and `dist` are common names for hand-written directories too, so in a Python
+/// project they are artifacts only when everything in them looks like packaging output.
+fn is_python_output(dir: &Path, name: &OsStr) -> bool {
+    const BUILD_DIRS: [&str; 4] = ["lib.", "bdist.", "temp.", "scripts-"];
+    const DIST_FILES: [&str; 4] = [".whl", ".tar.gz", ".zip", ".egg"];
+    let all = |names: &[OsString], ok: &dyn Fn(&str) -> bool| {
+        names.iter().all(|name| name.to_str().is_some_and(ok))
+    };
+    let is_build = name == "build";
+    if !is_build && name != "dist" {
+        return false;
+    }
+    let Some((files, dirs)) = read_entries(&dir.join(name)) else {
+        return false;
+    };
+    if is_build {
+        let ok = |n: &str| n == "lib" || BUILD_DIRS.iter().any(|prefix| n.starts_with(prefix));
+        files.is_empty() && all(&dirs, &ok)
+    } else {
+        let ok = |n: &str| DIST_FILES.iter().any(|suffix| n.ends_with(suffix));
+        dirs.is_empty() && all(&files, &ok)
+    }
 }
 
 /// Returns the names of the detected kinds and their artifact patterns.
 fn detect_kinds(files: &[OsString]) -> (Vec<&'static str>, Patterns) {
-    let has = |marker: &str| files.iter().any(|file| matches(marker, file));
-    let found = |kind: &&Kind| kind.markers.iter().any(|m| *m != "Makefile" && has(m));
-    let mut matched: Vec<&Kind> = KINDS.iter().filter(found).collect();
-    // Projects of any type can have a `Makefile`, so it only counts when nothing else matched.
-    if matched.is_empty() && has("Makefile") {
-        matched.extend(
-            KINDS
-                .iter()
-                .filter(|kind| kind.markers.contains(&"Makefile")),
-        );
+    let has = |markers: &[&str]| {
+        markers
+            .iter()
+            .any(|marker| files.iter().any(|file| matches(marker, file)))
+    };
+    let mut matched: Vec<&Kind> = KINDS.iter().filter(|kind| has(kind.markers)).collect();
+    if matched.is_empty() {
+        matched = KINDS.iter().filter(|kind| has(kind.weak_markers)).collect();
     }
     let mut kinds = Vec::new();
     let mut patterns = Patterns {
         dirs: Vec::new(),
         files: Vec::new(),
+        python: false,
     };
-    for kind in matched {
-        kinds.push(kind.name);
+    for kind in &matched {
+        if !matched
+            .iter()
+            .any(|other| other.overrides.contains(&kind.name))
+        {
+            kinds.push(kind.name);
+        }
         patterns.dirs.extend(kind.artifact_dirs);
         patterns.files.extend(kind.artifact_files);
-    }
-    // Bun and Deno projects have a `package.json` too, so their own markers win over it.
-    if kinds.contains(&"Bun") || kinds.contains(&"Deno") {
-        kinds.retain(|kind| *kind != "Node");
+        patterns.python |= kind.name == "Python";
     }
     (kinds, patterns)
 }
@@ -410,6 +506,33 @@ impl KondorFile {
     }
 }
 
+/// Adds the directories called `name` at any depth below `dir` to `found`. Hidden directories,
+/// paths already in `found` and the artifacts of nested projects are not searched, so a nested
+/// project's `node_modules` or virtual environment does not add thousands of entries.
+fn deep_dirs(dir: &Path, name: &str, found: &mut Vec<PathBuf>) {
+    let Some((files, dirs)) = read_entries(dir) else {
+        return;
+    };
+    let (_, patterns) = detect_kinds(&files);
+    for child in dirs {
+        let path = dir.join(&child);
+        if found.contains(&path) {
+            continue;
+        }
+        if child == name {
+            found.push(path);
+            continue;
+        }
+        let hidden = child.as_encoded_bytes().starts_with(b".");
+        let artifact = patterns.dirs.iter().any(|pattern| matches(pattern, &child))
+            || (patterns.python && is_python_output(dir, &child));
+        // A virtual environment in a directory without a Python marker is not an artifact.
+        if !hidden && !artifact && !path.join("pyvenv.cfg").exists() {
+            deep_dirs(&path, name, found);
+        }
+    }
+}
+
 /// Returns the artifact paths and whether the `.kondor` file added any of them.
 fn collect_artifacts(
     dir: &Path,
@@ -418,20 +541,30 @@ fn collect_artifacts(
     patterns: &Patterns,
     kondor: KondorFile,
 ) -> (Vec<PathBuf>, bool) {
-    let matching = |names: &[OsString], patterns: &[&str]| -> Vec<PathBuf> {
+    let matching = |names: &[OsString], patterns: &[&str], python: bool| -> Vec<PathBuf> {
         names
             .iter()
-            .filter(|name| patterns.iter().any(|pattern| matches(pattern, name)))
+            .filter(|name| {
+                patterns.iter().any(|pattern| matches(pattern, name))
+                    || (python && is_python_output(dir, name))
+            })
             .map(|name| dir.join(name))
             .collect()
     };
-    let mut artifacts = matching(dirs, &patterns.dirs);
-    artifacts.extend(matching(files, &patterns.files));
-    for pattern in patterns.dirs.iter().filter(|pattern| pattern.contains('/')) {
+    let mut artifacts = matching(dirs, &patterns.dirs, patterns.python);
+    artifacts.extend(matching(files, &patterns.files, false));
+    let (deep, shallow): (Vec<&str>, Vec<&str>) = patterns
+        .dirs
+        .iter()
+        .partition(|pattern| pattern.starts_with("**/"));
+    for pattern in shallow.iter().filter(|pattern| pattern.contains('/')) {
         let path = dir.join(pattern);
         if !artifacts.contains(&path) && is_real_nested_dir(dir, pattern) {
             artifacts.push(path);
         }
+    }
+    for pattern in deep {
+        deep_dirs(dir, &pattern[3..], &mut artifacts);
     }
     artifacts.retain(|path| !kondor.excludes.contains(path));
     let builtin_count = artifacts.len();
@@ -466,11 +599,13 @@ pub fn scan(
     let kondor = KondorFile::read(dir, &files);
     let (mut artifacts, from_kondor) = collect_artifacts(dir, &files, &dirs, &patterns, kondor);
     // A nested artifact like `vendor/bundle` is kept when a directory above it is excluded.
+    // One that a project above already lists, like a `__pycache__`, is not reported twice.
     artifacts.retain(|path| {
-        !path
-            .ancestors()
-            .take_while(|ancestor| *ancestor != dir)
-            .any(|ancestor| is_excluded(ancestor, excludes))
+        !skip.contains(path)
+            && !path
+                .ancestors()
+                .take_while(|ancestor| *ancestor != dir)
+                .any(|ancestor| is_excluded(ancestor, excludes))
     });
     if from_kondor {
         kinds.push(KONDOR_FILE);
@@ -679,11 +814,11 @@ mod tests {
     fn kondor_file_excludes_artifacts() {
         let temp = TempDir::new().unwrap();
         let root = temp.path();
-        touch(&root.join("pyproject.toml"));
+        touch(&root.join("meson.build"));
         touch(&root.join("build/handwritten.py"));
         touch(&root.join("build/tool/Cargo.toml"));
         touch(&root.join("build/tool/target/x"));
-        touch(&root.join("dist/x"));
+        touch(&root.join("builddir/x"));
         touch(&root.join("gen/a/x"));
         touch(&root.join("gen/b/x"));
         fs::write(root.join(KONDOR_FILE), "gen/*\n!build/\n! gen/b\n").unwrap();
@@ -698,8 +833,8 @@ mod tests {
         let expected = vec![
             (
                 root.to_path_buf(),
-                vec!["Python", KONDOR_FILE],
-                vec![root.join("dist"), root.join("gen/a")],
+                vec!["Meson", KONDOR_FILE],
+                vec![root.join("builddir"), root.join("gen/a")],
             ),
             (
                 root.join("build/tool"),
@@ -803,6 +938,79 @@ mod tests {
 
         set_mtime("web/package.json", 30);
         assert_eq!(modified(&projects[0]), old + Duration::from_secs(30));
+    }
+
+    #[test]
+    fn python_build_and_dist_need_packaging_output() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path();
+        touch(&root.join("a/setup.py"));
+        touch(&root.join("a/build/lib/pkg/mod.py"));
+        touch(&root.join("a/build/bdist.linux-x86_64/x"));
+        touch(&root.join("a/dist/pkg-1.0-py3-none-any.whl"));
+        touch(&root.join("a/dist/pkg-1.0.tar.gz"));
+        touch(&root.join("b/requirements.txt"));
+        touch(&root.join("b/build/deploy.sh"));
+        touch(&root.join("b/dist/index.html"));
+        touch(&root.join("c/pyproject.toml"));
+        touch(&root.join("c/build/lib/x"));
+        touch(&root.join("c/build/scripts/release.py"));
+        touch(&root.join("c/dist/pkg.whl"));
+        touch(&root.join("c/dist/assets/app.js"));
+
+        let mut found = Vec::new();
+        let _ = scan(root, &[], &GlobSet::empty(), &mut |p| {
+            let artifacts = p.artifacts.into_iter().map(|(a, _)| a);
+            found.push((p.path, artifacts.collect::<Vec<_>>()));
+            ControlFlow::Continue(())
+        });
+
+        let a = root.join("a");
+        assert_eq!(found, [(a.clone(), vec![a.join("build"), a.join("dist")])]);
+    }
+
+    #[test]
+    fn python_collects_nested_pycache() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path();
+        touch(&root.join("pyproject.toml"));
+        touch(&root.join("__pycache__/a.pyc"));
+        touch(&root.join("src/pkg/__pycache__/a.pyc"));
+        touch(&root.join("src/pkg/db/__pycache__/a.pyc"));
+        touch(&root.join(".venv/lib/__pycache__/a.pyc"));
+        touch(&root.join(".git/hooks/__pycache__/a.pyc"));
+        touch(&root.join("tools/venv/pyvenv.cfg"));
+        touch(&root.join("tools/venv/lib/__pycache__/a.pyc"));
+        touch(&root.join("web/package.json"));
+        touch(&root.join("web/node_modules/gyp/__pycache__/a.pyc"));
+        touch(&root.join("sub/setup.py"));
+        touch(&root.join("sub/__pycache__/a.pyc"));
+
+        let mut found = Vec::new();
+        let _ = scan(root, &[], &GlobSet::empty(), &mut |p| {
+            let relative = |path: &Path| path.strip_prefix(root).unwrap().to_path_buf();
+            let artifacts: Vec<PathBuf> = p.artifacts.iter().map(|(a, _)| relative(a)).collect();
+            found.push((relative(&p.path), artifacts));
+            ControlFlow::Continue(())
+        });
+
+        let paths = |names: &[&str]| names.iter().map(PathBuf::from).collect::<Vec<_>>();
+        assert_eq!(
+            found,
+            [
+                (
+                    PathBuf::new(),
+                    paths(&[
+                        ".venv",
+                        "__pycache__",
+                        "src/pkg/__pycache__",
+                        "src/pkg/db/__pycache__",
+                        "sub/__pycache__",
+                    ])
+                ),
+                (PathBuf::from("web"), paths(&["web/node_modules"])),
+            ]
+        );
     }
 
     #[test]
