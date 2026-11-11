@@ -45,6 +45,10 @@ struct Args {
     #[argp(option, short = 'e', arg_name = "pattern", from_str_fn(parse_exclude))]
     exclude: Vec<Glob>,
 
+    /// Print the version.
+    #[argp(switch, short = 'V')]
+    version: bool,
+
     /// Directories to scan (default: current directory).
     #[argp(positional)]
     dirs: Vec<PathBuf>,
@@ -141,6 +145,10 @@ fn parse_args() -> Args {
         .to_string_lossy()
         .into_owned();
     match Args::from_args(&[&cmd], &repeat_exclude(args)) {
+        Ok(args) if args.version => {
+            println!("{cmd} {}", env!("CARGO_PKG_VERSION"));
+            process::exit(0)
+        }
         Ok(args) => args,
         Err(EarlyExit::Help(help)) => {
             println!("{}", help.generate(argp::DEFAULT));

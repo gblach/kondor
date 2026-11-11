@@ -63,7 +63,7 @@ cargo install --path .
 ## Usage
 
 ```text
-Usage: kondor [-y] [-n] [-f] [-o <age>] [-e <pattern...>] [<dirs...>]
+Usage: kondor [-y] [-n] [-f] [-o <age>] [-e <pattern...>] [-V] [<dirs...>]
 
 Arguments:
   dirs                     Directories to scan (default: current directory).
@@ -80,6 +80,7 @@ Options:
                            patterns, with everything in them. Takes every
                            argument up to the next option or `--`, so put the
                            directories to scan first.
+  -V, --version            Print the version.
   -h, --help               Show this help message and exit.
 ```
 

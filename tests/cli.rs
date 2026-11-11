@@ -34,6 +34,17 @@ fn stdout(output: &Output) -> String {
 }
 
 #[test]
+fn version_is_printed() {
+    let temp = TempDir::new().unwrap();
+    for flag in ["--version", "-V"] {
+        let output = kondor(temp.path(), &[flag]);
+        assert!(output.status.success());
+        let expected = format!("kondor {}\n", env!("CARGO_PKG_VERSION"));
+        assert_eq!(stdout(&output), expected);
+    }
+}
+
+#[test]
 fn dry_run_lists_projects_and_removes_nothing() {
     let temp = TempDir::new().unwrap();
     let root = temp.path();
