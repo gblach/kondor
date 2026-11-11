@@ -16,7 +16,7 @@ mod scan;
 mod ui;
 
 use remove::remove;
-use scan::{Project, modified, scan, size};
+use scan::{Mtimes, Project, modified, scan, size};
 use ui::{Choice, Outcome, ask, display_path, print_outcome, print_total};
 
 /// Clean build artifacts from software projects, including projects nested in other projects.
@@ -57,6 +57,7 @@ struct State {
     dry_run: bool,
     force: bool,
     older: Option<Duration>,
+    mtimes: Mtimes,
     failed: bool,
     freed: u64,
 }
@@ -169,7 +170,9 @@ fn clean(root: &Path, project: &Project, force: bool) -> (u64, Vec<String>) {
 fn on_project(root: &Path, project: Project, state: &mut State) -> io::Result<ControlFlow<()>> {
     if let Some(older) = state.older {
         // A modification time in the future fails `elapsed`, so the project counts as new.
-        let age = modified(&project).elapsed().unwrap_or_default();
+        let age = modified(&project, &mut state.mtimes)
+            .elapsed()
+            .unwrap_or_default();
         if age < older {
             return Ok(ControlFlow::Continue(()));
         }
@@ -252,6 +255,7 @@ fn main() -> ExitCode {
         dry_run: args.dry_run,
         force: args.force,
         older: args.older,
+        mtimes: Mtimes::new(),
         failed: false,
         freed: 0,
     };

@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, Metadata};
 use std::ops::ControlFlow;
@@ -310,40 +310,52 @@ pub fn size(path: &Path) -> u64 {
     stats(path).0
 }
 
+/// Newest modification time of the files below each directory walked by `newest_source`.
+pub type Mtimes = HashMap<PathBuf, SystemTime>;
+
 /// Directory mtimes are left out, because removing an artifact updates its parent's mtime and
 /// would make a cleaned project look recently used. Hidden directories are skipped like in
 /// `scan`, so a `git fetch` into `.git` does not count as work on the project.
-fn newest_source(dir: &Path, artifacts: &[(PathBuf, u64)]) -> SystemTime {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return SystemTime::UNIX_EPOCH;
-    };
-    entries
-        .flatten()
-        .map(|entry| {
-            let path = entry.path();
-            match entry.file_type() {
-                Ok(kind) if kind.is_dir() => {
-                    let hidden = entry.file_name().as_encoded_bytes().starts_with(b".");
-                    if hidden || artifacts.iter().any(|(artifact, _)| *artifact == path) {
-                        SystemTime::UNIX_EPOCH
-                    } else {
-                        newest_source(&path, artifacts)
+fn newest_source(dir: &Path, artifacts: &[(PathBuf, u64)], cache: &mut Mtimes) -> SystemTime {
+    let newest = fs::read_dir(dir).map_or(SystemTime::UNIX_EPOCH, |entries| {
+        entries
+            .flatten()
+            .map(|entry| {
+                let path = entry.path();
+                match entry.file_type() {
+                    Ok(kind) if kind.is_dir() => {
+                        let hidden = entry.file_name().as_encoded_bytes().starts_with(b".");
+                        if hidden || artifacts.iter().any(|(artifact, _)| *artifact == path) {
+                            SystemTime::UNIX_EPOCH
+                        } else {
+                            newest_source(&path, artifacts, cache)
+                        }
                     }
+                    _ => entry
+                        .metadata()
+                        .map_or(SystemTime::UNIX_EPOCH, |meta| file_modified(&meta)),
                 }
-                _ => entry
-                    .metadata()
-                    .map_or(SystemTime::UNIX_EPOCH, |meta| file_modified(&meta)),
-            }
-        })
-        .max()
-        .unwrap_or(SystemTime::UNIX_EPOCH)
+            })
+            .max()
+            .unwrap_or(SystemTime::UNIX_EPOCH)
+    });
+    cache.insert(dir.to_path_buf(), newest);
+    newest
 }
 
 /// Newest modification time of any file in the project, artifacts and nested projects included.
-pub fn modified(project: &Project) -> SystemTime {
-    project
-        .artifacts_modified
-        .max(newest_source(&project.path, &project.artifacts))
+/// The walk of a project already covers the projects nested in it, so their times are taken
+/// from `cache` instead of walking their files again.
+pub fn modified(project: &Project, cache: &mut Mtimes) -> SystemTime {
+    let source = match cache.get(&project.path) {
+        Some(newest) => *newest,
+        None => {
+            // The scan has left the tree walked last, so its times are not needed anymore.
+            cache.clear();
+            newest_source(&project.path, &project.artifacts, cache)
+        }
+    };
+    project.artifacts_modified.max(source)
 }
 
 /// Paths from `.kondor` may come from untrusted repos, so they must stay inside the project.
@@ -934,10 +946,50 @@ mod tests {
             projects.push(p);
             ControlFlow::Continue(())
         });
-        assert_eq!(modified(&projects[0]), old + Duration::from_secs(20));
+        let fresh = |project: &Project| modified(project, &mut Mtimes::new());
+        assert_eq!(fresh(&projects[0]), old + Duration::from_secs(20));
 
         set_mtime("web/package.json", 30);
-        assert_eq!(modified(&projects[0]), old + Duration::from_secs(30));
+        assert_eq!(fresh(&projects[0]), old + Duration::from_secs(30));
+    }
+
+    #[test]
+    fn modified_of_a_nested_project_comes_from_the_outer_walk() {
+        let temp = TempDir::new().unwrap();
+        let root = temp.path();
+        touch(&root.join("Cargo.toml"));
+        touch(&root.join("target/x"));
+        touch(&root.join("web/package.json"));
+        touch(&root.join("web/src/index.js"));
+        touch(&root.join("web/node_modules/x"));
+        touch(&root.join("other/Cargo.toml"));
+        touch(&root.join("other/target/x"));
+
+        let mut projects = Vec::new();
+        let _ = scan(&root.join("web"), &[], &GlobSet::empty(), &mut |p| {
+            projects.push(p);
+            ControlFlow::Continue(())
+        });
+        let _ = scan(root, &[], &GlobSet::empty(), &mut |p| {
+            projects.push(p);
+            ControlFlow::Continue(())
+        });
+        let [web, outer, other, _] = &projects[..] else {
+            panic!("expected four projects");
+        };
+        let expected = modified(web, &mut Mtimes::new());
+
+        let mut cache = Mtimes::new();
+        modified(outer, &mut cache);
+        assert!(cache.contains_key(&root.join("web")));
+        // A file removed after the outer walk shows that `web` is not walked again.
+        fs::remove_file(root.join("web/src/index.js")).unwrap();
+        fs::remove_dir(root.join("web/src")).unwrap();
+        assert_eq!(modified(web, &mut cache), expected);
+        assert!(cache.contains_key(root));
+
+        modified(other, &mut cache);
+        assert!(cache.contains_key(&root.join("other")));
     }
 
     #[test]
