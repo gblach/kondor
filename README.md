@@ -115,7 +115,8 @@ Freed 2.2 GiB
 
 The prompt needs an interactive terminal; use `--yes` to clean everything without asking. Then
 each project is printed as `Cleaned ./api (Cargo) 1.8 GiB`. Results and the total go to stdout,
-errors to stderr. The exit code is 1 when an artifact could not be removed.
+errors to stderr. The exit code is 1 when an artifact could not be removed. When a directory to
+scan cannot be read, nothing is cleaned and the exit code is 1 too.
 
 `--dry-run` only lists what would be cleaned, without asking or removing anything, so it also
 works without a terminal:

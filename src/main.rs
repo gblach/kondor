@@ -1,5 +1,6 @@
 use std::env;
 use std::ffi::OsString;
+use std::fs;
 use std::io;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
@@ -219,6 +220,17 @@ fn main() -> ExitCode {
     } else {
         args.dirs
     };
+    // Checked before anything is cleaned, so a typo in one path does not clean only the others.
+    let mut unreadable = false;
+    for dir in &dirs {
+        if let Err(e) = fs::read_dir(dir) {
+            eprintln!("Error: cannot scan {}: {e}", display_path(dir));
+            unreadable = true;
+        }
+    }
+    if unreadable {
+        return ExitCode::FAILURE;
+    }
 
     let mut excludes = GlobSet::builder();
     for glob in args.exclude {

@@ -96,6 +96,23 @@ fn reports_when_nothing_is_found() {
 }
 
 #[test]
+fn unreadable_directory_argument_is_an_error() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    make_projects(root);
+    write(&root.join("file"), 0);
+
+    for bad in ["missing", "file"] {
+        let output = kondor(root, &["--yes", "api", bad]);
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(stdout(&output), "");
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(stderr.starts_with(&format!("Error: cannot scan {bad}: ")));
+    }
+    assert!(root.join("api/target").exists());
+}
+
+#[test]
 fn failed_removal_sets_the_exit_code() {
     let temp = TempDir::new().unwrap();
     let root = temp.path();
