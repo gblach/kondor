@@ -1,11 +1,14 @@
+use std::env;
+use std::ffi::OsString;
 use std::io;
 use std::ops::ControlFlow;
 use std::path::{Path, PathBuf};
-use std::process::ExitCode;
+use std::process::{self, ExitCode};
 use std::time::Duration;
 
-use argp::FromArgs;
+use argp::{EarlyExit, FromArgs};
 use console::Term;
+use globset::{Glob, GlobBuilder, GlobSet};
 
 mod remove;
 mod scan;
@@ -34,6 +37,12 @@ struct Args {
     /// M (30 days), y (365 days).
     #[argp(option, short = 'o', arg_name = "age", from_str_fn(parse_age))]
     older: Option<Duration>,
+
+    /// Skip directories whose path matches one of these glob patterns, with everything in
+    /// them. Takes every argument up to the next option or `--`, so put the directories to
+    /// scan first.
+    #[argp(option, short = 'e', arg_name = "pattern", from_str_fn(parse_exclude))]
+    exclude: Vec<Glob>,
 
     /// Directories to scan (default: current directory).
     #[argp(positional)]
@@ -67,6 +76,79 @@ fn parse_age(value: &str) -> Result<Duration, String> {
     let count: u64 = value[..value.len() - 1].parse().map_err(|_| error())?;
     let secs = count.checked_mul(unit_secs).ok_or_else(error)?;
     Ok(Duration::from_secs(secs))
+}
+
+fn parse_exclude(value: &str) -> Result<Glob, String> {
+    let pattern = value.trim_end_matches('/');
+    if pattern.is_empty() {
+        return Err(format!("invalid pattern `{value}`"));
+    }
+    // Scanned paths are made absolute before matching, so the globs must be absolute too.
+    let glob = if pattern.starts_with('/') {
+        pattern.to_string()
+    } else {
+        let cwd = env::current_dir().map_err(|e| e.to_string())?;
+        let relative = pattern.strip_prefix("./").unwrap_or(pattern);
+        Path::new(&globset::escape(&cwd.to_string_lossy()))
+            .join(relative)
+            .to_string_lossy()
+            .into_owned()
+    };
+    // Without this `*` would also match `/`, so `work/*` would exclude nested directories.
+    GlobBuilder::new(&glob)
+        .literal_separator(true)
+        .build()
+        .map_err(|e| format!("invalid pattern `{value}`: {}", e.kind()))
+}
+
+/// An unquoted `--exclude work/*` is expanded by the shell into several arguments, so every plain
+/// argument after `--exclude` is an exclude. argp takes one value per option, so the option is
+/// repeated in front of each further value.
+fn repeat_exclude(args: impl IntoIterator<Item = OsString>) -> Vec<OsString> {
+    let mut args = args.into_iter();
+    let mut out = Vec::new();
+    // None outside an exclude list, otherwise whether the list already has its first value.
+    let mut list = None;
+    for arg in args.by_ref() {
+        let text = arg.to_string_lossy();
+        if text == "--" {
+            out.push(arg);
+            break;
+        }
+        if text.starts_with('-') && text.len() > 1 {
+            // `-ne` is `-n -e`, so a group of short options ending in `e` starts a list too.
+            let exclude = text == "--exclude" || (!text.starts_with("--") && text.ends_with('e'));
+            list = exclude.then_some(false);
+        } else if list == Some(true) {
+            out.push("--exclude".into());
+        } else if list == Some(false) {
+            list = Some(true);
+        }
+        out.push(arg);
+    }
+    out.extend(args);
+    out
+}
+
+fn parse_args() -> Args {
+    let mut args = env::args_os();
+    let cmd = args.next().unwrap_or_default();
+    let cmd = Path::new(&cmd)
+        .file_name()
+        .unwrap_or_default()
+        .to_string_lossy()
+        .into_owned();
+    match Args::from_args(&[&cmd], &repeat_exclude(args)) {
+        Ok(args) => args,
+        Err(EarlyExit::Help(help)) => {
+            println!("{}", help.generate(argp::DEFAULT));
+            process::exit(0)
+        }
+        Err(EarlyExit::Err(e)) => {
+            eprintln!("{e}\nRun {cmd} --help for more information.");
+            process::exit(1)
+        }
+    }
 }
 
 /// Returns the bytes freed and a message for each artifact that could not be removed.
@@ -124,7 +206,7 @@ fn on_project(root: &Path, project: Project, state: &mut State) -> io::Result<Co
 }
 
 fn main() -> ExitCode {
-    let args: Args = argp::parse_args_or_exit(argp::DEFAULT);
+    let args = parse_args();
     // read_key never returns a real key without a terminal, so the prompt would hang.
     if !args.yes && !args.dry_run && !Term::stderr().is_term() {
         eprintln!(
@@ -136,6 +218,18 @@ fn main() -> ExitCode {
         vec![PathBuf::from(".")]
     } else {
         args.dirs
+    };
+
+    let mut excludes = GlobSet::builder();
+    for glob in args.exclude {
+        excludes.add(glob);
+    }
+    let excludes = match excludes.build() {
+        Ok(excludes) => excludes,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            return ExitCode::FAILURE;
+        }
     };
 
     let mut state = State {
@@ -160,7 +254,7 @@ fn main() -> ExitCode {
                 ControlFlow::Break(())
             }
         };
-        if scan(dir, &[], &mut handle).is_break() {
+        if scan(dir, &[], &excludes, &mut handle).is_break() {
             break;
         }
     }
@@ -175,6 +269,65 @@ fn main() -> ExitCode {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn exclude_takes_arguments_up_to_the_next_option() {
+        let repeat = |args: &[&str]| -> Vec<String> {
+            repeat_exclude(args.iter().map(OsString::from))
+                .iter()
+                .map(|arg| arg.to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(
+            repeat(&["dir", "-e", "a", "b", "c", "-o", "1d", "x"]),
+            [
+                "dir",
+                "-e",
+                "a",
+                "--exclude",
+                "b",
+                "--exclude",
+                "c",
+                "-o",
+                "1d",
+                "x"
+            ]
+        );
+        assert_eq!(
+            repeat(&["-ne", "a", "b", "--", "dir", "-e", "c", "d"]),
+            ["-ne", "a", "--exclude", "b", "--", "dir", "-e", "c", "d"]
+        );
+        assert_eq!(
+            repeat(&["--exclude", "a", "--exclude", "b", "c"]),
+            ["--exclude", "a", "--exclude", "b", "--exclude", "c"]
+        );
+        assert_eq!(repeat(&["-n", "a", "b"]), ["-n", "a", "b"]);
+    }
+
+    #[test]
+    fn parses_excludes() {
+        let cwd = env::current_dir().unwrap();
+        let matches = |pattern: &str, path: &Path| {
+            parse_exclude(pattern)
+                .unwrap()
+                .compile_matcher()
+                .is_match(path)
+        };
+        assert!(matches("vendor", &cwd.join("vendor")));
+        assert!(matches("vendor/", &cwd.join("vendor")));
+        assert!(!matches("vendor", &cwd.join("a/vendor")));
+        assert!(matches("**/vendor", &cwd.join("a/b/vendor")));
+        assert!(matches("*-keep", &cwd.join("old-keep")));
+        assert!(!matches("*-keep", &cwd.join("a/old-keep")));
+        assert!(matches("./work/api", &cwd.join("work/api")));
+        assert!(matches("work/*", &cwd.join("work/api")));
+        assert!(!matches("work/*", &cwd.join("work/api/web")));
+        assert!(!matches("work/api", &cwd.join("a/work/api")));
+        assert!(matches("/srv/*/api", Path::new("/srv/x/api")));
+        for bad in ["", "/", "a/[b"] {
+            assert!(parse_exclude(bad).is_err(), "{bad}");
+        }
+    }
 
     #[test]
     fn parses_ages() {

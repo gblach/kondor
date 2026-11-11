@@ -1,10 +1,10 @@
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, Metadata};
 use std::ops::ControlFlow;
-use std::path::{Component, Path, PathBuf};
+use std::path::{self, Component, Path, PathBuf};
 use std::time::SystemTime;
 
-use globset::Glob;
+use globset::{Glob, GlobSet};
 
 struct Kind {
     name: &'static str,
@@ -429,6 +429,10 @@ fn collect_artifacts(
     (artifacts, from_kondor)
 }
 
+fn is_excluded(path: &Path, excludes: &GlobSet) -> bool {
+    !excludes.is_empty() && path::absolute(path).is_ok_and(|path| excludes.is_match(path))
+}
+
 /// Unlike kondo, scanning continues below a detected project so nested projects are found too.
 /// Only artifact directories are skipped. `skip` carries ancestors' nested artifact paths
 /// (like Ruby's `vendor/bundle`) which cannot be pruned at the ancestor's level.
@@ -437,6 +441,7 @@ fn collect_artifacts(
 pub fn scan(
     dir: &Path,
     skip: &[PathBuf],
+    excludes: &GlobSet,
     on_project: &mut impl FnMut(Project) -> ControlFlow<()>,
 ) -> ControlFlow<()> {
     let Some((files, dirs)) = read_entries(dir) else {
@@ -444,7 +449,14 @@ pub fn scan(
     };
     let (mut kinds, patterns) = detect_kinds(&files);
     let kondor = KondorFile::read(dir, &files);
-    let (artifacts, from_kondor) = collect_artifacts(dir, &files, &dirs, &patterns, kondor);
+    let (mut artifacts, from_kondor) = collect_artifacts(dir, &files, &dirs, &patterns, kondor);
+    // A nested artifact like `vendor/bundle` is kept when a directory above it is excluded.
+    artifacts.retain(|path| {
+        !path
+            .ancestors()
+            .take_while(|ancestor| *ancestor != dir)
+            .any(|ancestor| is_excluded(ancestor, excludes))
+    });
     if from_kondor {
         kinds.push(KONDOR_FILE);
     }
@@ -483,8 +495,8 @@ pub fn scan(
         .filter(|name| !name.as_encoded_bytes().starts_with(b"."));
     for name in visible {
         let child = dir.join(name);
-        if !skip.contains(&child) {
-            scan(&child, &skip, on_project)?;
+        if !skip.contains(&child) && !is_excluded(&child, excludes) {
+            scan(&child, &skip, excludes, on_project)?;
         }
     }
     ControlFlow::Continue(())
@@ -523,7 +535,7 @@ mod tests {
         touch(&root.join("rb/vendor/bundle/gems/foo/.bundle/x"));
 
         let mut found = Vec::new();
-        let _ = scan(root, &[], &mut |p| {
+        let _ = scan(root, &[], &GlobSet::empty(), &mut |p| {
             found.push(p.path.strip_prefix(root).unwrap().to_path_buf());
             ControlFlow::Continue(())
         });
@@ -549,7 +561,7 @@ mod tests {
         touch(&root.join("other/fp-info-cache"));
 
         let mut found = Vec::new();
-        let _ = scan(root, &[], &mut |p| {
+        let _ = scan(root, &[], &GlobSet::empty(), &mut |p| {
             let artifacts = p.artifacts.into_iter().map(|(a, _)| a);
             found.push((p.path, p.kinds, artifacts.collect::<Vec<_>>()));
             ControlFlow::Continue(())
@@ -593,7 +605,7 @@ mod tests {
         .unwrap();
 
         let mut found = Vec::new();
-        let _ = scan(root, &[], &mut |p| {
+        let _ = scan(root, &[], &GlobSet::empty(), &mut |p| {
             found.push((
                 p.kinds,
                 p.artifacts.into_iter().map(|(a, _)| a).collect::<Vec<_>>(),
@@ -633,7 +645,7 @@ mod tests {
         fs::write(root.join(KONDOR_FILE), "gen/*\n!build/\n! gen/b\n").unwrap();
 
         let mut found = Vec::new();
-        let _ = scan(root, &[], &mut |p| {
+        let _ = scan(root, &[], &GlobSet::empty(), &mut |p| {
             let artifacts = p.artifacts.into_iter().map(|(a, _)| a);
             found.push((p.path, p.kinds, artifacts.collect::<Vec<_>>()));
             ControlFlow::Continue(())
@@ -656,7 +668,7 @@ mod tests {
 
     fn found_paths(root: &Path) -> Vec<PathBuf> {
         let mut found = Vec::new();
-        let _ = scan(root, &[], &mut |p| {
+        let _ = scan(root, &[], &GlobSet::empty(), &mut |p| {
             found.push(p.path.strip_prefix(root).unwrap().to_path_buf());
             ControlFlow::Continue(())
         });
@@ -739,7 +751,7 @@ mod tests {
         set_mtime(".git/FETCH_HEAD", 1000);
 
         let mut projects = Vec::new();
-        let _ = scan(root, &[], &mut |p| {
+        let _ = scan(root, &[], &GlobSet::empty(), &mut |p| {
             projects.push(p);
             ControlFlow::Continue(())
         });

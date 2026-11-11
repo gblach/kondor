@@ -23,13 +23,17 @@ What kondor does differently:
 - **Other project types.** Bun, Deno, KiCad, Meson, Go (`vendor`) and Ruby (`.bundle`,
   `vendor/bundle`) are detected, and Python projects are found by their project files and also
   clean `.venv`, `venv`, `build` and `dist`.
+- **Excludes are glob patterns.** `--exclude` takes patterns like `'**/vendor'` or `work/*`, and
+  an excluded artifact is kept too, so `--exclude '**/target'` cleans everything except `target`
+  directories. kondo's `--ignored-dirs` takes only plain directory paths and skips the projects
+  in them.
 - **Failures are reported.** The exit code is 1 when something could not be removed, and the
   freed total also counts directories that were only partly removed.
 
 What kondo has and kondor does not:
 
 - a GUI (`kondo-ui`)
-- `--ignored-dirs`, `--follow-symlinks`, `--same-filesystem` and `--quiet`
+- `--follow-symlinks`, `--same-filesystem` and `--quiet`
 - Unity, Unreal Engine, Godot, Jupyter, Turborepo, Terraform, React Native, CocoaPods and Pixi
   projects
 
@@ -59,18 +63,24 @@ cargo install --path .
 ## Usage
 
 ```text
-Usage: kondor [-y] [-n] [-f] [-o <age>] [<dirs...>]
+Usage: kondor [-y] [-n] [-f] [-o <age>] [-e <pattern...>] [<dirs...>]
 
 Arguments:
-  dirs               Directories to scan (default: current directory).
+  dirs                     Directories to scan (default: current directory).
 
 Options:
-  -y, --yes          Clean all found projects without asking.
-  -n, --dry-run      List what would be cleaned without removing anything.
-  -f, --force        Make read-only directories writable so they can be removed.
-  -o, --older <age>  Only clean projects with no file changed for this long,
-                     e.g. 20d. Units: m, h, d, w, M (30 days), y (365 days).
-  -h, --help         Show this help message and exit.
+  -y, --yes                Clean all found projects without asking.
+  -n, --dry-run            List what would be cleaned without removing anything.
+  -f, --force              Make read-only directories writable so they can be
+                           removed.
+  -o, --older <age>        Only clean projects with no file changed for this
+                           long, e.g. 20d. Units: m, h, d, w, M (30 days), y
+                           (365 days).
+  -e, --exclude <pattern>  Skip directories whose path matches one of these glob
+                           patterns, with everything in them. Takes every
+                           argument up to the next option or `--`, so put the
+                           directories to scan first.
+  -h, --help               Show this help message and exit.
 ```
 
 Projects are handled as soon as they are found, so nothing is buffered while scanning. For each
@@ -121,6 +131,26 @@ newest change to any file in it, so editing the code, building it or working in 
 all make it recent. Hidden directories like `.git` do not count, but hidden artifacts like
 `.venv` do. Directories' own modification times are ignored, because removing an artifact
 updates them.
+
+`--exclude` skips directories whose path matches a glob pattern, together with everything in
+them. The path is relative to the current directory or absolute,
+so `--exclude work/api` skips only that one directory. `*` matches within one path level and `**`
+matches any number of levels: `--exclude 'work/*'` skips every directory directly in `work`, and
+`--exclude '**/vendor'` skips every `vendor` directory. An excluded artifact is kept too:
+`--exclude '**/target'` cleans everything except `target` directories.
+
+`--exclude` takes every argument up to the next option or `--`, so several excludes can follow
+one `--exclude`. Because of that, directories to scan must come first or after `--`:
+
+```sh
+kondor ~/projects --exclude work/api '**/vendor'
+kondor --exclude work/api '**/vendor' -- ~/projects
+```
+
+This also makes unquoted patterns work. The shell replaces `--exclude work/*` with the names
+that match, and each of them becomes an exclude. Quote a pattern to pass it to kondor as it is,
+which is needed for `**` and for patterns that match nothing in the current directory. To match
+a `*`, `?` or `[` that is part of a directory name, escape it as `\*` or `[*]`.
 
 Symlinks are never followed. Hidden directories (names starting with `.`) are not scanned,
 because they mostly hold tool data like `.git`, `~/.cache` or installed editor plugins, which look

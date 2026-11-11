@@ -179,3 +179,44 @@ fn older_skips_recently_changed_projects() {
     assert_eq!(stdout(&output), "Cleaned ./old (Cargo) 10 B\nFreed 10 B\n");
     assert!(root.join("new/target/x").exists());
 }
+
+#[test]
+fn exclude_skips_matching_directories() {
+    let temp = TempDir::new().unwrap();
+    let root = temp.path();
+    make_projects(root);
+    write(&root.join("keep/Cargo.toml"), 0);
+    write(&root.join("keep/target/x"), 10);
+    write(&root.join("lib/Cargo.toml"), 0);
+    write(&root.join("lib/target/x"), 10);
+    write(&root.join("ruby/Gemfile"), 0);
+    write(&root.join("ruby/vendor/bundle/x"), 10);
+
+    // Several values after one option, like a pattern the shell has expanded.
+    let output = kondor(root, &["-n", "--exclude", "api", "keep", "ruby", "--", "."]);
+    assert_eq!(
+        stdout(&output),
+        "Would clean ./lib (Cargo) 10 B\nWould free 10 B\n"
+    );
+
+    let args = ["--yes", "-e", "keep", "api/w*", "-e", "**/vendor"];
+    let output = kondor(root, &args);
+    assert!(output.status.success());
+    assert_eq!(
+        stdout(&output),
+        "Cleaned ./api (Cargo) 2.0 KiB\n\
+         Cleaned ./lib (Cargo) 10 B\n\
+         Freed 2.0 KiB\n"
+    );
+    assert!(root.join("keep/target/x").exists());
+    assert!(root.join("api/web/node_modules").exists());
+    assert!(root.join("ruby/vendor/bundle/x").exists());
+
+    let output = kondor(root, &["--dry-run", "--exclude", "*/target"]);
+    assert_eq!(
+        stdout(&output),
+        "Would clean ./api/web (Node) 1.0 KiB\n\
+         Would clean ./ruby (Ruby) 10 B\n\
+         Would free 1.0 KiB\n"
+    );
+}
