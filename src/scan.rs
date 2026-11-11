@@ -13,14 +13,12 @@ struct Kind {
     artifact_files: &'static [&'static str],
 }
 
-const JS_ARTIFACTS: &[&str] = &["node_modules", ".angular", ".next", ".nuxt", ".svelte-kit"];
-
 /// Patterns starting with `*` match by suffix. Artifacts containing `/` are nested paths.
 const KINDS: &[Kind] = &[
     Kind {
         name: "Bun",
         markers: &["bun.lock", "bun.lockb", "bunfig.toml"],
-        artifact_dirs: JS_ARTIFACTS,
+        artifact_dirs: &["node_modules", ".angular", ".next", ".nuxt", ".svelte-kit"],
         artifact_files: &[],
     },
     Kind {
@@ -105,7 +103,7 @@ const KINDS: &[Kind] = &[
     Kind {
         name: "Node",
         markers: &["package.json"],
-        artifact_dirs: JS_ARTIFACTS,
+        artifact_dirs: &["node_modules", ".angular", ".next", ".nuxt", ".svelte-kit"],
         artifact_files: &[],
     },
     Kind {
@@ -351,21 +349,30 @@ struct Patterns {
 
 /// Returns the names of the detected kinds and their artifact patterns.
 fn detect_kinds(files: &[OsString]) -> (Vec<&'static str>, Patterns) {
+    let has = |marker: &str| files.iter().any(|file| matches(marker, file));
+    let found = |kind: &&Kind| kind.markers.iter().any(|m| *m != "Makefile" && has(m));
+    let mut matched: Vec<&Kind> = KINDS.iter().filter(found).collect();
+    // Projects of any type can have a `Makefile`, so it only counts when nothing else matched.
+    if matched.is_empty() && has("Makefile") {
+        matched.extend(
+            KINDS
+                .iter()
+                .filter(|kind| kind.markers.contains(&"Makefile")),
+        );
+    }
     let mut kinds = Vec::new();
     let mut patterns = Patterns {
         dirs: Vec::new(),
         files: Vec::new(),
     };
-    for kind in KINDS {
-        let found = kind
-            .markers
-            .iter()
-            .any(|marker| files.iter().any(|file| matches(marker, file)));
-        if found {
-            kinds.push(kind.name);
-            patterns.dirs.extend(kind.artifact_dirs);
-            patterns.files.extend(kind.artifact_files);
-        }
+    for kind in matched {
+        kinds.push(kind.name);
+        patterns.dirs.extend(kind.artifact_dirs);
+        patterns.files.extend(kind.artifact_files);
+    }
+    // Bun and Deno projects have a `package.json` too, so their own markers win over it.
+    if kinds.contains(&"Bun") || kinds.contains(&"Deno") {
+        kinds.retain(|kind| *kind != "Node");
     }
     (kinds, patterns)
 }
@@ -515,6 +522,35 @@ mod tests {
     fn touch(path: &Path) {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         fs::write(path, b"x").unwrap();
+    }
+
+    #[test]
+    fn bun_and_deno_projects_are_not_also_node() {
+        let files = |names: &[&str]| names.iter().map(OsString::from).collect::<Vec<_>>();
+        assert_eq!(detect_kinds(&files(&["package.json"])).0, ["Node"]);
+        assert_eq!(
+            detect_kinds(&files(&["bun.lock", "package.json"])).0,
+            ["Bun"]
+        );
+        assert_eq!(
+            detect_kinds(&files(&["deno.json", "package.json"])).0,
+            ["Deno"]
+        );
+    }
+
+    #[test]
+    fn makefile_counts_only_without_other_markers() {
+        let files = |names: &[&str]| names.iter().map(OsString::from).collect::<Vec<_>>();
+        let (kinds, patterns) = detect_kinds(&files(&["Makefile"]));
+        assert_eq!(kinds, ["C/C++"]);
+        assert!(patterns.dirs.contains(&"build"));
+
+        let (kinds, patterns) = detect_kinds(&files(&["Makefile", "go.mod"]));
+        assert_eq!(kinds, ["Go"]);
+        assert_eq!(patterns.dirs, ["vendor"]);
+
+        let (kinds, _) = detect_kinds(&files(&["CMakeLists.txt", "Makefile", "go.mod"]));
+        assert_eq!(kinds, ["C/C++", "Go"]);
     }
 
     #[test]

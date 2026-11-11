@@ -161,6 +161,8 @@ and a hidden directory given as an argument (`kondor ~/.config/nvim`) is scanned
 
 A directory is a project when it contains one of the marker files (`*` matches by suffix).
 Artifacts are directories, except KiCad's `fp-info-cache` and `*-bak`, which are files.
+A directory with Bun or Deno markers is not also reported as Node.
+A `Makefile` counts only when no other marker is found, because projects of any type can have one.
 
 | Type    | Markers                                                                                 | Artifacts                                                                                                                     |
 | ------- | --------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
