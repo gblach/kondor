@@ -14,7 +14,7 @@ include = ["/LICENSE", "/README.md", "/src/", "/tests/"]
 argp = "0.4"
 console = "0.16"
 globset = "0.4"
-rustix = { version = "1", features = ["fs"] }
+rustix = { version = "1", features = ["fs", "linux_5_11"] }
 
 [dev-dependencies]
 tempfile = "3"
