@@ -1,6 +1,8 @@
+use std::collections::HashSet;
 use std::ffi::{OsStr, OsString};
 use std::fs::{self, Metadata};
 use std::ops::ControlFlow;
+use std::os::unix::fs::MetadataExt;
 use std::path::{self, Component, Path, PathBuf};
 use std::time::SystemTime;
 
@@ -197,20 +199,26 @@ fn file_modified(meta: &Metadata) -> SystemTime {
     meta.modified().unwrap_or(SystemTime::UNIX_EPOCH)
 }
 
+/// Hard links to one file share its data, so only the first link found adds to the size.
+/// `seen` holds the device and inode numbers of the hard-linked files counted so far.
+fn file_stats(meta: &Metadata, seen: &mut HashSet<(u64, u64)>) -> (u64, SystemTime) {
+    let counted = meta.nlink() < 2 || seen.insert((meta.dev(), meta.ino()));
+    let bytes = if counted { meta.len() } else { 0 };
+    (bytes, file_modified(meta))
+}
+
 /// Returns the total size and the newest modification time of the files in a directory.
-fn dir_stats(path: &Path) -> (u64, SystemTime) {
+fn dir_stats(path: &Path, seen: &mut HashSet<(u64, u64)>) -> (u64, SystemTime) {
     let Ok(entries) = fs::read_dir(path) else {
         return (0, SystemTime::UNIX_EPOCH);
     };
     entries
         .flatten()
         .map(|entry| match entry.file_type() {
-            Ok(kind) if kind.is_dir() => dir_stats(&entry.path()),
+            Ok(kind) if kind.is_dir() => dir_stats(&entry.path(), seen),
             _ => entry
                 .metadata()
-                .map_or((0, SystemTime::UNIX_EPOCH), |meta| {
-                    (meta.len(), file_modified(&meta))
-                }),
+                .map_or((0, SystemTime::UNIX_EPOCH), |meta| file_stats(&meta, seen)),
         })
         .fold((0, SystemTime::UNIX_EPOCH), |(bytes, newest), (b, m)| {
             (bytes + b, newest.max(m))
@@ -220,7 +228,7 @@ fn dir_stats(path: &Path) -> (u64, SystemTime) {
 /// Size and modification time of a directory's contents or of a single file.
 fn stats(path: &Path) -> (u64, SystemTime) {
     if is_real_dir(path) {
-        dir_stats(path)
+        dir_stats(path, &mut HashSet::new())
     } else {
         fs::symlink_metadata(path).map_or((0, SystemTime::UNIX_EPOCH), |meta| {
             (meta.len(), file_modified(&meta))
@@ -795,6 +803,19 @@ mod tests {
 
         set_mtime("web/package.json", 30);
         assert_eq!(modified(&projects[0]), old + Duration::from_secs(30));
+    }
+
+    #[test]
+    fn size_counts_hard_links_once() {
+        let temp = TempDir::new().unwrap();
+        let dir = temp.path().join("node_modules");
+        fs::create_dir_all(dir.join("sub")).unwrap();
+        fs::write(dir.join("a"), [0; 100]).unwrap();
+        fs::hard_link(dir.join("a"), dir.join("b")).unwrap();
+        fs::hard_link(dir.join("a"), dir.join("sub/c")).unwrap();
+        fs::write(dir.join("d"), [0; 10]).unwrap();
+
+        assert_eq!(size(&dir), 110);
     }
 
     #[test]
